@@ -1,7 +1,8 @@
 use buddy_rs::*;
 
 fn main() {
-    let bdd = take_manager(1000, 1000, 4);
+    let bdd = take_manager(1000, 1000);
+    bdd.set_varnum(4);
     let x0 = bdd.ithvar(0);
     let x1 = bdd.ithvar(2);
     let x2 = bdd.ithvar(1);
@@ -44,7 +45,8 @@ fn main() {
         }
     }
 
-    println!("reachable states: {}", bdd.satcount(&r) / f64::powf(2.0, primvars.len() as f64));
+
+    println!("reachable states: {}", bdd.satcount_set(&r, &normset));
 
     bdd.allsat(&r, |s| {
         println!("satisfying: {:?}", s);

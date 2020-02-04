@@ -27,7 +27,7 @@ pub struct BDDStats {
     pub gbc_num: i32,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
 pub enum Valuation {
     DontCare,
     False,
@@ -49,6 +49,9 @@ impl Drop for BDDPair {
 impl BDDManager {
     pub fn set_varnum(&self, n: i32) {
         unsafe { buddy_sys::bdd_setvarnum(n) };
+    }
+    pub fn ext_varnum(&self, n: i32) {
+        unsafe { buddy_sys::bdd_extvarnum(n) };
     }
     pub fn get_varnum(&self) -> i32 {
         unsafe { buddy_sys::bdd_varnum() }
@@ -116,6 +119,9 @@ impl BDDManager {
         unsafe { buddy_sys::bdd_satcount(f.root) }
     }
 
+    pub fn satcount_set(&self, f: &BDD, set: &BDD) -> f64 {
+        unsafe { buddy_sys::bdd_satcountset(f.root, set.root) }
+    }
 
     // BDD operations
     pub fn not(&self, a: &BDD) -> BDD {
@@ -167,12 +173,28 @@ impl BDDManager {
     }
 
     pub fn support(&self, f: &BDD) -> BDD {
+        println!("calling support on {:?}", f);
         let bdd = unsafe { buddy_sys::bdd_support(f.root) };
         BDD::from(bdd)
     }
 
+    pub fn constrain(&self, f: &BDD, c: &BDD) -> BDD {
+        let bdd = unsafe { buddy_sys::bdd_constrain(f.root, c.root) };
+        BDD::from(bdd)
+    }
+
+    pub fn simplify(&self, f: &BDD, d: &BDD) -> BDD {
+        let bdd = unsafe { buddy_sys::bdd_simplify(f.root, d.root) };
+        BDD::from(bdd)
+    }
+
+    pub fn exist(&self, f: &BDD, vars: &BDD) -> BDD {
+        let bdd = unsafe { buddy_sys::bdd_exist(f.root, vars.root) };
+        BDD::from(bdd)
+    }
+
     pub fn allsat<T: 'static + FnMut(&[Valuation]) -> ()>(&self, f: &BDD, mut cb: T) {
-        // great hacks abound.
+        // hacks to get buddy call our function
         use std::cell::Cell;
         use std::process;
 
@@ -202,6 +224,22 @@ impl BDDManager {
         });
     }
 
+    pub fn allsat_vec(&self, f: &BDD) -> Vec<Vec<Valuation>> {
+        // hacks to get around borrow checker...
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let rf: Rc<RefCell<Vec<Vec<Valuation>>>> = Rc::new(RefCell::new(Vec::new()));
+        let rfclone = rf.clone();
+
+        self.allsat(f, move |a: &[Valuation]| {
+            let mut v = rfclone.borrow_mut();
+            v.push(a.to_vec());
+        });
+
+        let inner = Rc::try_unwrap(rf).unwrap();
+        inner.into_inner()
+    }
+
     pub fn scan_set(&self, set: &BDD) -> Vec<BDDVar> {
         let mut ptr: *mut i32 = std::ptr::null_mut();
         let mut len: i32 = 0;
@@ -223,12 +261,11 @@ struct BDDOwner {
 }
 
 impl BDDOwner {
-    fn take_manager(&mut self, node_size: i32, cache_size: i32, num_vars: i32) -> BDDManager {
+    fn take_manager(&mut self, node_size: i32, cache_size: i32) -> BDDManager {
         let bdd = self.manager.take().expect(
             "Trying to use buddy in two places at the same time!");
 
         unsafe { buddy_sys::bdd_init(node_size,cache_size); }
-        unsafe { buddy_sys::bdd_setvarnum(num_vars); }
         bdd
     }
 
@@ -243,8 +280,8 @@ static mut BDD_OWNER: BDDOwner = BDDOwner {
 };
 
 
-pub fn take_manager(node_size: i32, cache_size: i32, num_vars: i32) -> BDDManager {
-    unsafe { BDD_OWNER.take_manager(node_size, cache_size, num_vars) }
+pub fn take_manager(node_size: i32, cache_size: i32) -> BDDManager {
+    unsafe { BDD_OWNER.take_manager(node_size, cache_size) }
 }
 
 pub fn return_manager(manager: BDDManager) {
@@ -302,7 +339,8 @@ mod tests {
 
     #[test]
     fn basic() {
-        let bdd = take_manager(1000, 1000, 2);
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(2);
         let a = bdd.ithvar(0);
         let b = bdd.one();
         let c = bdd.and(&a, &b);
@@ -315,7 +353,8 @@ mod tests {
 
     #[test]
     fn stats() {
-        let bdd = take_manager(1000, 1000, 2);
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(2);
         let a = bdd.ithvar(0);
         let b = bdd.one();
         let _c = bdd.and(&a, &b);
@@ -327,7 +366,8 @@ mod tests {
 
     #[test]
     fn satcount() {
-        let bdd = take_manager(1000, 1000, 3);
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(3);
         let a = bdd.ithvar(0);
         let b = bdd.ithvar(1);
         let c = bdd.ithvar(2);
@@ -366,22 +406,25 @@ mod tests {
 
     #[test]
     fn sets() {
-        let bdd = take_manager(1000, 1000, 4);
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(4);
 
         let set = bdd.make_set(&[1, 3]);
-        let set = bdd.scan_set(&set);
 
-        assert!(!set.contains(&0));
-        assert!(set.contains(&1));
-        assert!(!set.contains(&2));
-        assert!(set.contains(&3));
-        assert!(!set.contains(&4));
+        let set_v = bdd.scan_set(&set);
+        assert!(!set_v.contains(&0));
+        assert!(set_v.contains(&1));
+        assert!(!set_v.contains(&2));
+        assert!(set_v.contains(&3));
+        assert!(!set_v.contains(&4));
+
         return_manager(bdd);
     }
 
     #[test]
-    fn allsat() {
-        let bdd = take_manager(1000, 1000, 3);
+    fn support() {
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(3);
         let a = bdd.ithvar(0);
         let b = bdd.ithvar(1);
         let c = bdd.ithvar(2);
@@ -389,18 +432,64 @@ mod tests {
         let ab = bdd.and(&a, &b);
         let abc = bdd.or(&ab, &c);
 
-        // hacks to get around borrow checker...
-        use std::cell::RefCell;
-        use std::rc::Rc;
-        let rf: Rc<RefCell<Vec<Vec<Valuation>>>> = Rc::new(RefCell::new(Vec::new()));
-        let rfclone = rf.clone();
+        let s = bdd.support(&abc);
+        let set = bdd.scan_set(&s);
 
+        println!("set: {:?}", set);
+
+        return_manager(bdd);
+
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(3);
+        let a = bdd.ithvar(0);
+        let b = bdd.ithvar(1);
+        let c = bdd.ithvar(2);
+
+        let ab = bdd.and(&a, &b);
+        let abc = bdd.or(&ab, &c);
+
+        let s = bdd.support(&abc);
+        let set = bdd.scan_set(&s);
+
+        println!("set: {:?}", set);
+
+        return_manager(bdd);
+    }
+
+
+    #[test]
+    fn allsat() {
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(3);
+        let a = bdd.ithvar(0);
+        let b = bdd.ithvar(1);
+        let c = bdd.ithvar(2);
+
+        let ab = bdd.and(&a, &b);
+        let abc = bdd.or(&ab, &c);
+
+        let vn = bdd.get_varnum();
         bdd.allsat(&abc, move |a: &[Valuation]| {
-            let mut v = rfclone.borrow_mut();
-            v.push(a.to_vec());
+            // all cubes contains all variables
+            assert_eq!(a.len() as i32, vn);
         });
 
-        let v = rf.borrow();
+        return_manager(bdd);
+    }
+
+    #[test]
+    fn allsat_vec() {
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(3);
+        let a = bdd.ithvar(0);
+        let b = bdd.ithvar(1);
+        let c = bdd.ithvar(2);
+
+        let ab = bdd.and(&a, &b);
+        let abc = bdd.or(&ab, &c);
+
+        let v = bdd.allsat_vec(&abc);
+
         assert_eq!(v.len(), 3); // three set of satisfying assignments.
 
         return_manager(bdd);
@@ -408,7 +497,8 @@ mod tests {
 
     #[test]
     fn threading() {
-        let bdd = take_manager(1000, 1000, 2);
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(2);
         let a = bdd.ithvar(0);
         let b = bdd.one();
         let c = bdd.and(&a, &b);
@@ -417,7 +507,8 @@ mod tests {
 
         let t2 = std::thread::spawn(|| {
             // do it all again in this thread.
-            let bdd = take_manager(1000, 1000, 2);
+            let bdd = take_manager(1000, 1000);
+            bdd.set_varnum(2);
             let a = bdd.ithvar(0);
             let b = bdd.one();
             let c = bdd.and(&a, &b);
@@ -431,10 +522,10 @@ mod tests {
 
     #[test]
     fn take_manager_twice_should_panic() {
-        let bdd = take_manager(1000, 1000, 2);
+        let bdd = take_manager(1000, 1000);
 
         let result = std::panic::catch_unwind(|| {
-            let _bdd = take_manager(1000, 1000, 2);
+            let _bdd = take_manager(1000, 1000);
         });
         assert!(result.is_err());
 
@@ -444,14 +535,14 @@ mod tests {
 
     #[test]
     fn threading_mistake_should_panic() {
-        let bdd = take_manager(1000, 1000, 2);
+        let bdd = take_manager(1000, 1000);
 
         // we forgot this...
         // return_manager(bdd);
         let t1 = std::thread::spawn(|| {
             // then we panic here
             let result = std::panic::catch_unwind(|| {
-                let _bdd = take_manager(1000, 1000, 2);
+                let _bdd = take_manager(1000, 1000);
             });
             assert!(result.is_err());
         });
