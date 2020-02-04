@@ -173,7 +173,6 @@ impl BDDManager {
     }
 
     pub fn support(&self, f: &BDD) -> BDD {
-        println!("calling support on {:?}", f);
         let bdd = unsafe { buddy_sys::bdd_support(f.root) };
         BDD::from(bdd)
     }
@@ -329,7 +328,7 @@ impl Drop for BDD {
 /// Note that due to the thread-unsafety of buddy, all tests need to
 /// be run with --test-threads=1 to work properly!
 ///
-/// Additionally, the failing tests will crash our mutex, which may
+/// The failing tests will make our manager "owner" crash, which may
 /// cause otherwise successful tests to fail.
 ///
 
@@ -423,6 +422,9 @@ mod tests {
 
     #[test]
     fn support() {
+        // this test exposes a bug in the original buddy,
+        // where support crashes after reinitialization.
+
         let bdd = take_manager(1000, 1000);
         bdd.set_varnum(3);
         let a = bdd.ithvar(0);
@@ -433,9 +435,7 @@ mod tests {
         let abc = bdd.or(&ab, &c);
 
         let s = bdd.support(&abc);
-        let set = bdd.scan_set(&s);
-
-        println!("set: {:?}", set);
+        let _set = bdd.scan_set(&s);
 
         return_manager(bdd);
 
@@ -449,9 +449,7 @@ mod tests {
         let abc = bdd.or(&ab, &c);
 
         let s = bdd.support(&abc);
-        let set = bdd.scan_set(&s);
-
-        println!("set: {:?}", set);
+        let _set = bdd.scan_set(&s);
 
         return_manager(bdd);
     }
@@ -496,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn threading() {
+    fn threading_is_fine() {
         let bdd = take_manager(1000, 1000);
         bdd.set_varnum(2);
         let a = bdd.ithvar(0);
