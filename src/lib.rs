@@ -29,9 +29,9 @@ pub struct BDDStats {
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
 pub enum Valuation {
-    DontCare,
     False,
     True,
+    DontCare,
 }
 
 pub struct BDDManager(*mut i32); // mut pointer to prevent send
