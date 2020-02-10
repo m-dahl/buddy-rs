@@ -454,6 +454,30 @@ mod tests {
         return_manager(bdd);
     }
 
+    #[test]
+    fn swap() {
+        let bdd = take_manager(1000, 1000);
+        bdd.set_varnum(2);
+        let a = bdd.ithvar(0);
+        let nb = bdd.nithvar(1);
+
+        let anb = bdd.and(&a,&nb);
+
+        let s = bdd.allsat_vec(&anb);
+        assert_eq!(s, vec![vec![Valuation::True, Valuation::False]]);
+
+        let pair = bdd.make_pair(&[(1,0),(0,1)]);
+        let nab = bdd.replace(&anb, &pair);
+
+        let s = bdd.allsat_vec(&nab);
+        assert_eq!(s, vec![vec![Valuation::False, Valuation::True]]);
+
+        // obvious api error here. TODO
+        drop(pair);
+
+        return_manager(bdd);
+    }
+
 
     #[test]
     fn allsat() {
