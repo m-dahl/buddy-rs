@@ -315,6 +315,10 @@ impl BDD {
         unsafe { buddy_sys::bdd_var(self.root) }
     }
 
+    pub fn node_index(&self) -> i32 {
+        self.root
+    }
+
 }
 
 
