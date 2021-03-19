@@ -27,6 +27,19 @@ pub struct BDDStats {
     pub gbc_num: i32,
 }
 
+pub struct BDDGCStats {
+    /// Total number of allocated nodes in the nodetable.
+    pub nodes: i32,
+    /// Number of free nodes in the nodetable.
+    pub freenodes: i32,
+    /// Time used for garbage collection this time.
+    pub time: std::time::Duration,
+    /// Total time used for garbage collection.
+    pub sumtime: std::time::Duration,
+    /// Number of garbage collections done until now.
+    pub num: i32,
+}
+
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
 pub enum Valuation {
     False,
@@ -57,6 +70,36 @@ impl BDDManager {
         unsafe { buddy_sys::bdd_varnum() }
     }
 
+    pub fn set_gc_cb<T: 'static + Fn(bool, BDDGCStats) -> ()>(&self, cb: T) {
+        use std::cell::Cell;
+        use std::process;
+        thread_local! {
+            static CTX: Cell<*const dyn Fn(bool, BDDGCStats)> = Cell::new(&mut |_,_| {
+                println!("C function spawned a thread or stored a function pointer");
+                process::abort();
+            });
+        }
+
+        unsafe extern "C" fn wrapper(arg1: ::std::os::raw::c_int, arg2: *mut buddy_sys::bddGbcStat) {
+            let stats = BDDGCStats {
+                nodes: (*arg2).nodes,
+                freenodes: (*arg2).freenodes,
+                time: std::time::Duration::from_millis((1000 * (*arg2).time / (buddy_sys::clocks_per_sec as i64)) as u64),
+                sumtime: std::time::Duration::from_millis((1000 * (*arg2).sumtime / (buddy_sys::clocks_per_sec as i64)) as u64),
+                num: (*arg2).num
+            };
+            CTX.with(|ptr| (*ptr.get())(arg1 == 1, stats));
+        }
+
+        CTX.with(move |ptr| {
+            ptr.set(&cb);
+            unsafe { buddy_sys::bdd_gbc_hook(Some(wrapper));  };
+        });
+    }
+
+    pub fn unset_gc_cb(&self) {
+        unsafe { buddy_sys::bdd_gbc_hook(None); };
+    }
     pub fn get_stats(&self) -> BDDStats {
         let mut c_stats = buddy_sys::s_bddStat {
             produced: 0,
