@@ -100,6 +100,18 @@ impl BDDManager {
     pub fn unset_gc_cb(&self) {
         unsafe { buddy_sys::bdd_gbc_hook(None); };
     }
+
+    pub fn auto_reorder(&self, method: i32) {
+        unsafe { buddy_sys::bdd_autoreorder(method); };
+    }
+
+    pub fn varblockall(&self) {
+        unsafe { buddy_sys::bdd_varblockall(); };
+    }
+
+    // TODO: there are more functions around reordering
+    // that should be exposed.
+
     pub fn get_stats(&self) -> BDDStats {
         let mut c_stats = buddy_sys::s_bddStat {
             produced: 0,
